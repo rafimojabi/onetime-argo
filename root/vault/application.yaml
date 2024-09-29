@@ -17,7 +17,7 @@ spec:
     helm:
       valueFiles: 
       - $values/root/vault/values.yaml
-    targetRevision: 0.8.21
+    targetRevision: 0.28.1
   - repoURL: https://github.com/rafimojabi/onetime-argo.git 
     targetRevision: HEAD
     ref: values
