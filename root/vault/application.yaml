@@ -13,7 +13,7 @@ spec:
   sources:
   
   - repoURL: https://helm.releases.hashicorp.com
-    chart: vault
+    chart: hashicorp/vault
     helm:
       valueFiles: 
       - $values/root/vault/values.yaml
