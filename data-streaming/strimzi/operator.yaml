@@ -13,10 +13,10 @@ spec:
   sources:
   
   - repoURL: https://strimzi.io/charts
-    chart: strimzi/strimzi-kafka-operator
+    chart: strimzi-kafka-operator
     helm:
       valueFiles: 
-      - $values/root/data-streaming/stimzi/values.yaml
+      - $values/data-streaming/stimzi/values.yaml
     targetRevision: 0.43.0
   - repoURL: https://github.com/rafimojabi/onetime-argo.git 
     targetRevision: HEAD
