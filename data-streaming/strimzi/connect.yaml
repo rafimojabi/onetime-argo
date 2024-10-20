@@ -3,18 +3,19 @@ kind: KafkaConnect
 metadata:
   name: my-connect-cluster
   namespace: strimzi
-#  annotations:
+  annotations:
 #  # use-connector-resources configures this KafkaConnect
 #  # to use KafkaConnector resources to avoid
 #  # needing to call the Connect REST API directly
-#    strimzi.io/use-connector-resources: "true"
+    strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.8.0
   replicas: 1
-  bootstrapServers: my-cluster-kafka-bootstrap:9093
+  image: ttl.sh/rafi-postgresql-connector:12m
+  bootstrapServers: kafka-cluster-kafka-bootstrap:9093
   tls:
     trustedCertificates:
-      - secretName: my-cluster-cluster-ca-cert
+      - secretName: kafka-cluster-cluster-ca-cert
         pattern: "*.crt"
   config:
     group.id: connect-cluster
