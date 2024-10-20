@@ -23,7 +23,6 @@ spec:
     slot.name: "defaultdb"
     publication.name: "kafka_connect"
     table.include.list: "public.*"
-    signal.data.collection: "public.debezium_signal"
     incremental.snapshot.chunk.size: "524288"
     heartbeat.interval.ms: "1000"
     key.converter: "org.apache.kafka.connect.json.JsonConverter"
