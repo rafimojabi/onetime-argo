@@ -1,0 +1,739 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-server
+  namespace: strimzi
+  labels:
+    app: strimzi
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups:
+      - extensions
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-server
+  namespace: strimzi
+  labels:
+    app: strimzi
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-server
+  namespace: strimzi
+  labels:
+    app: strimzi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-server
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-server
+    namespace: myproject
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: prometheus
+  namespace: strimzi
+  labels:
+    app: strimzi
+spec:
+  replicas: 1
+  serviceAccountName: prometheus-server
+  podMonitorSelector:
+    matchLabels:
+      app: strimzi
+  serviceMonitorSelector: {}
+  resources:
+    requests:
+      memory: 400Mi
+  enableAdminAPI: false
+  ruleSelector:
+    matchLabels:
+      role: alert-rules
+      app: strimzi
+  additionalScrapeConfigs:
+    name: additional-scrape-configs
+    key: prometheus-additional.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: additional-scrape-configs
+  namespace: strimzi
+type: Opaque
+stringData:
+  prometheus-additional.yaml: |
+    - job_name: kubernetes-cadvisor
+      honor_labels: true
+      scrape_interval: 10s
+      scrape_timeout: 10s
+      metrics_path: /metrics/cadvisor
+      scheme: https
+      kubernetes_sd_configs:
+      - role: node
+        namespaces:
+          names: []
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      relabel_configs:
+      - separator: ;
+        regex: __meta_kubernetes_node_label_(.+)
+        replacement: $1
+        action: labelmap
+      - separator: ;
+        regex: (.*)
+        target_label: __address__
+        replacement: kubernetes.default.svc:443
+        action: replace
+      - source_labels: [__meta_kubernetes_node_name]
+        separator: ;
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+        action: replace
+      - source_labels: [__meta_kubernetes_node_name]
+        separator: ;
+        regex: (.*)
+        target_label: node_name
+        replacement: $1
+        action: replace
+      - source_labels: [__meta_kubernetes_node_address_InternalIP]
+        separator: ;
+        regex: (.*)
+        target_label: node_ip
+        replacement: $1
+        action: replace
+      metric_relabel_configs:
+      - source_labels: [container, __name__]
+        separator: ;
+        regex: POD;container_(network).*
+        target_label: container
+        replacement: $1
+        action: replace
+      - source_labels: [container]
+        separator: ;
+        regex: POD
+        replacement: $1
+        action: drop
+      - source_labels: [container]
+        separator: ;
+        regex: ^$
+        replacement: $1
+        action: drop
+      - source_labels: [__name__]
+        separator: ;
+        regex: container_(network_tcp_usage_total|tasks_state|memory_failures_total|network_udp_usage_total)
+        replacement: $1
+        action: drop
+
+    - job_name: kubernetes-nodes-kubelet
+      scrape_interval: 10s
+      scrape_timeout: 10s
+      scheme: https
+      kubernetes_sd_configs:
+      - role: node
+        namespaces:
+          names: []
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    role: alert-rules
+    app: strimzi
+  name: prometheus-k8s-rules
+  namespace: strimzi
+spec:
+  groups:
+  - name: kafka
+    rules:
+    - alert: KafkaRunningOutOfSpace
+      expr: kubelet_volume_stats_available_bytes{persistentvolumeclaim=~"data(-[0-9]+)?-(.+)-kafka-[0-9]+"} * 100 / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"data(-[0-9]+)?-(.+)-kafka-[0-9]+"} < 15
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka is running out of free disk space'
+        description: 'There are only {{ $value }} percent available at {{ $labels.persistentvolumeclaim }} PVC'
+    - alert: UnderReplicatedPartitions
+      expr: kafka_server_replicamanager_underreplicatedpartitions > 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka under replicated partitions'
+        description: 'There are {{ $value }} under replicated partitions on {{ $labels.kubernetes_pod_name }}'
+    - alert: AbnormalControllerState
+      expr: sum(kafka_controller_kafkacontroller_activecontrollercount) by (strimzi_io_name) != 1
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka abnormal controller state'
+        description: 'There are {{ $value }} active controllers in the cluster'
+    - alert: OfflinePartitions
+      expr: sum(kafka_controller_kafkacontroller_offlinepartitionscount) > 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka offline partitions'
+        description: 'One or more partitions have no leader'
+    - alert: UnderMinIsrPartitionCount
+      expr: kafka_server_replicamanager_underminisrpartitioncount > 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka under min ISR partitions'
+        description: 'There are {{ $value }} partitions under the min ISR on {{ $labels.kubernetes_pod_name }}'
+    - alert: OfflineLogDirectoryCount
+      expr: kafka_log_logmanager_offlinelogdirectorycount > 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka offline log directories'
+        description: 'There are {{ $value }} offline log directories on {{ $labels.kubernetes_pod_name }}'
+    - alert: ScrapeProblem
+      expr: up{kubernetes_namespace!~"openshift-.+",kubernetes_pod_name=~".+-kafka-[0-9]+"} == 0
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Prometheus unable to scrape metrics from {{ $labels.kubernetes_pod_name }}/{{ $labels.instance }}'
+        description: 'Prometheus was unable to scrape metrics from {{ $labels.kubernetes_pod_name }}/{{ $labels.instance }} for more than 3 minutes'
+    - alert: ClusterOperatorContainerDown
+      expr: count((container_last_seen{container="strimzi-cluster-operator"} > (time() - 90))) < 1 or absent(container_last_seen{container="strimzi-cluster-operator"})
+      for: 1m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Cluster Operator down'
+        description: 'The Cluster Operator has been down for longer than 90 seconds'
+    - alert: KafkaBrokerContainersDown
+      expr: absent(container_last_seen{container="kafka",pod=~".+-kafka-[0-9]+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'All `kafka` containers down or in CrashLookBackOff status'
+        description: 'All `kafka` containers have been down or in CrashLookBackOff status for 3 minutes'
+    - alert: KafkaContainerRestartedInTheLast5Minutes
+      expr: count(count_over_time(container_last_seen{container="kafka"}[5m])) > 2 * count(container_last_seen{container="kafka",pod=~".+-kafka-[0-9]+"})
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'One or more Kafka containers restarted too often'
+        description: 'One or more Kafka containers were restarted too often within the last 5 minutes'
+  - name: zookeeper
+    rules:
+    - alert: AvgRequestLatency
+      expr: zookeeper_avgrequestlatency > 10
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Zookeeper average request latency'
+        description: 'The average request latency is {{ $value }} on {{ $labels.kubernetes_pod_name }}'
+    - alert: OutstandingRequests
+      expr: zookeeper_outstandingrequests > 10
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Zookeeper outstanding requests'
+        description: 'There are {{ $value }} outstanding requests on {{ $labels.kubernetes_pod_name }}'
+    - alert: ZookeeperRunningOutOfSpace
+      expr: kubelet_volume_stats_available_bytes{persistentvolumeclaim=~"data-(.+)-zookeeper-[0-9]+"} < 5368709120
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Zookeeper is running out of free disk space'
+        description: 'There are only {{ $value }} bytes available at {{ $labels.persistentvolumeclaim }} PVC'
+    - alert: ZookeeperContainerRestartedInTheLast5Minutes
+      expr: count(count_over_time(container_last_seen{container="zookeeper"}[5m])) > 2 * count(container_last_seen{container="zookeeper",pod=~".+-zookeeper-[0-9]+"})
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'One or more Zookeeper containers were restarted too often'
+        description: 'One or more Zookeeper containers were restarted too often within the last 5 minutes. This alert can be ignored when the Zookeeper cluster is scaling up'
+    - alert: ZookeeperContainersDown
+      expr: absent(container_last_seen{container="zookeeper",pod=~".+-zookeeper-[0-9]+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'All `zookeeper` containers in the Zookeeper pods down or in CrashLookBackOff status'
+        description: 'All `zookeeper` containers in the Zookeeper pods have been down or in CrashLookBackOff status for 3 minutes'
+  - name: entityOperator
+    rules:
+    - alert: TopicOperatorContainerDown
+      expr: absent(container_last_seen{container="topic-operator",pod=~".+-entity-operator-.+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Container topic-operator in Entity Operator pod down or in CrashLookBackOff status'
+        description: 'Container topic-operator in Entity Operator pod has been or in CrashLookBackOff status for 3 minutes'
+    - alert: UserOperatorContainerDown
+      expr: absent(container_last_seen{container="user-operator",pod=~".+-entity-operator-.+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Container user-operator in Entity Operator pod down or in CrashLookBackOff status'
+        description: 'Container user-operator in Entity Operator pod have been down or in CrashLookBackOff status for 3 minutes'
+  - name: connect
+    rules:
+    - alert: ConnectContainersDown
+      expr: absent(container_last_seen{container=~".+-connect",pod=~".+-connect-.+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'All Kafka Connect containers down or in CrashLookBackOff status'
+        description: 'All Kafka Connect containers have been down or in CrashLookBackOff status for 3 minutes'
+    - alert: ConnectFailedConnector
+      expr: sum(kafka_connect_connector_status{status="failed"}) > 0
+      for: 5m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Kafka Connect Connector Failure'
+        description: 'One or more connectors have been in failed state for 5 minutes,'
+    - alert: ConnectFailedTask
+      expr: sum(kafka_connect_worker_connector_failed_task_count) > 0
+      for: 5m
+      labels:
+        severity: major
+      annotations:
+        summary: 'Kafka Connect Task Failure'
+        description: 'One or more tasks have been in failed state for 5 minutes.'
+  - name: bridge
+    rules:
+    - alert: BridgeContainersDown
+      expr: absent(container_last_seen{container=~".+-bridge",pod=~".+-bridge-.+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'All Kafka Bridge containers down or in CrashLookBackOff status'
+        description: 'All Kafka Bridge containers have been down or in CrashLookBackOff status for 3 minutes'
+    - alert: AvgProducerLatency
+      expr: strimzi_bridge_kafka_producer_request_latency_avg > 10
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka Bridge producer average request latency'
+        description: 'The average producer request latency is {{ $value }} on {{ $labels.clientId }}'
+    - alert: AvgConsumerFetchLatency
+      expr: strimzi_bridge_kafka_consumer_fetch_latency_avg > 500
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka Bridge consumer average fetch latency'
+        description: 'The average consumer fetch latency is {{ $value }} on {{ $labels.clientId }}'
+    - alert: AvgConsumerCommitLatency
+      expr: strimzi_bridge_kafka_consumer_commit_latency_avg > 200
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka Bridge consumer average commit latency'
+        description: 'The average consumer commit latency is {{ $value }} on {{ $labels.clientId }}'
+    - alert: Http4xxErrorRate
+      expr: strimzi_bridge_http_server_requestCount_total{code=~"^4..$", container=~"^.+-bridge", path !="/favicon.ico"} > 10
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka Bridge returns code 4xx too often'
+        description: 'Kafka Bridge returns code 4xx too much ({{ $value }}) for the path {{ $labels.path }}'
+    - alert: Http5xxErrorRate
+      expr: strimzi_bridge_http_server_requestCount_total{code=~"^5..$", container=~"^.+-bridge"} > 10
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Kafka Bridge returns code 5xx too often'
+        description: 'Kafka Bridge returns code 5xx too much ({{ $value }}) for the path {{ $labels.path }}'
+  - name: mirrorMaker
+    rules:
+    - alert: MirrorMakerContainerDown
+      expr: absent(container_last_seen{container=~".+-mirror-maker",pod=~".+-mirror-maker-.+"})
+      for: 3m
+      labels:
+        severity: major
+      annotations:
+        summary: 'All Kafka Mirror Maker containers down or in CrashLookBackOff status'
+        description: 'All Kafka Mirror Maker containers have been down or in CrashLookBackOff status for 3 minutes'
+  - name: kafkaExporter
+    rules:
+    - alert: UnderReplicatedPartition
+      expr: kafka_topic_partition_under_replicated_partition > 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Topic has under-replicated partitions'
+        description: 'Topic  {{ $labels.topic }} has {{ $value }} under-replicated partition {{ $labels.partition }}'
+    - alert: TooLargeConsumerGroupLag
+      expr: kafka_consumergroup_lag > 1000
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Consumer group lag is too big'
+        description: 'Consumer group {{ $labels.consumergroup}} lag is too big ({{ $value }}) on topic {{ $labels.topic }}/partition {{ $labels.partition }}'
+    - alert: NoMessageForTooLong
+      expr: changes(kafka_topic_partition_current_offset[10m]) == 0
+      for: 10s
+      labels:
+        severity: warning
+      annotations:
+        summary: 'No message for 10 minutes'
+        description: 'There is no messages in topic {{ $labels.topic}}/partition {{ $labels.partition }} for 10 minutes'
+  - name: certificates
+    interval: 1m0s
+    rules:
+    - alert: CertificateExpiration
+      expr: |
+        strimzi_certificate_expiration_timestamp_ms/1000 - time() < 30 * 24 * 60 * 60
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Certificate will expire in less than 30 days'
+        description: 'Certificate of type {{ $labels.type }} in cluster {{ $labels.cluster }} in namespace {{ $labels.resource_namespace }} will expire in less than 30 days'
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cluster-operator-metrics
+  namespace: strimzi
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/kind: cluster-operator
+  namespaceSelector:
+    matchNames:
+      - myproject
+  podMetricsEndpoints:
+  - path: /metrics
+    port: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: entity-operator-metrics
+  namespace: strimzi
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: entity-operator
+  namespaceSelector:
+    matchNames:
+      - myproject
+  podMetricsEndpoints:
+  - path: /metrics
+    port: healthcheck
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kafka-resources-metrics
+  namespace: strimzi
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchExpressions:
+      - key: "strimzi.io/kind"
+        operator: In
+        values: ["Kafka", "KafkaConnect", "KafkaMirrorMaker", "KafkaMirrorMaker2"]
+  namespaceSelector:
+    matchNames:
+      - myproject
+  podMetricsEndpoints:
+  - path: /metrics
+    port: tcp-prometheus
+    relabelings:
+    - separator: ;
+      regex: __meta_kubernetes_pod_label_(strimzi_io_.+)
+      replacement: $1
+      action: labelmap
+    - sourceLabels: [__meta_kubernetes_namespace]
+      separator: ;
+      regex: (.*)
+      targetLabel: namespace
+      replacement: $1
+      action: replace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      separator: ;
+      regex: (.*)
+      targetLabel: kubernetes_pod_name
+      replacement: $1
+      action: replace
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      separator: ;
+      regex: (.*)
+      targetLabel: node_name
+      replacement: $1
+      action: replace
+    - sourceLabels: [__meta_kubernetes_pod_host_ip]
+      separator: ;
+      regex: (.*)
+      targetLabel: node_ip
+      replacement: $1
+      action: replace
+
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: my-connect-cluster
+  labels:
+    app: my-connect-cluster
+spec:
+  version: 3.8.0
+  replicas: 1
+  bootstrapServers: my-cluster-kafka-bootstrap:9092
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics
+        key: metrics-config.yml
+
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: connect-metrics
+  namespace: strimzi
+  labels:
+    app: strimzi
+data:
+  metrics-config.yml: |
+    # Inspired by kafka-connect rules
+    # https://github.com/prometheus/jmx_exporter/blob/master/example_configs/kafka-connect.yml
+    # See https://github.com/prometheus/jmx_exporter for more info about JMX Prometheus Exporter metrics
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+    #kafka.connect:type=app-info,client-id="{clientid}"
+    #kafka.consumer:type=app-info,client-id="{clientid}"
+    #kafka.producer:type=app-info,client-id="{clientid}"
+    - pattern: 'kafka.(.+)<type=app-info, client-id=(.+)><>start-time-ms'
+      name: kafka_$1_start_time_seconds
+      labels:
+        clientId: "$2"
+      help: "Kafka $1 JMX metric start time seconds"
+      type: GAUGE
+      valueFactor: 0.001
+    - pattern: 'kafka.(.+)<type=app-info, client-id=(.+)><>(commit-id|version): (.+)'
+      name: kafka_$1_$3_info
+      value: 1
+      labels:
+        clientId: "$2"
+        $3: "$4"
+      help: "Kafka $1 JMX metric info version and commit-id"
+      type: UNTYPED
+
+    #kafka.consumer:type=consumer-fetch-manager-metrics,client-id="{clientid}",topic="{topic}"", partition="{partition}"
+    - pattern: kafka.consumer<type=consumer-fetch-manager-metrics, client-id=(.+), topic=(.+), partition=(.+)><>(.+-total)
+      name: kafka_consumer_fetch_manager_$4
+      labels:
+        clientId: "$1"
+        topic: "$2"
+        partition: "$3"
+      help: "Kafka Consumer JMX metric type consumer-fetch-manager-metrics"
+      type: COUNTER
+    - pattern: kafka.consumer<type=consumer-fetch-manager-metrics, client-id=(.+), topic=(.+), partition=(.+)><>(compression-rate|.+-avg|.+-replica|.+-lag|.+-lead)
+      name: kafka_consumer_fetch_manager_$4
+      labels:
+        clientId: "$1"
+        topic: "$2"
+        partition: "$3"
+      help: "Kafka Consumer JMX metric type consumer-fetch-manager-metrics"
+      type: GAUGE
+
+    #kafka.producer:type=producer-topic-metrics,client-id="{clientid}",topic="{topic}"
+    - pattern: kafka.producer<type=producer-topic-metrics, client-id=(.+), topic=(.+)><>(.+-total)
+      name: kafka_producer_topic_$3
+      labels:
+        clientId: "$1"
+        topic: "$2"
+      help: "Kafka Producer JMX metric type producer-topic-metrics"
+      type: COUNTER
+    - pattern: kafka.producer<type=producer-topic-metrics, client-id=(.+), topic=(.+)><>(compression-rate|.+-avg|.+rate)
+      name: kafka_producer_topic_$3
+      labels:
+        clientId: "$1"
+        topic: "$2"
+      help: "Kafka Producer JMX metric type producer-topic-metrics"
+      type: GAUGE
+
+    #kafka.connect:type=connect-node-metrics,client-id="{clientid}",node-id="{nodeid}"
+    #kafka.consumer:type=consumer-node-metrics,client-id=consumer-1,node-id="{nodeid}"
+    - pattern: kafka.(.+)<type=(.+)-metrics, client-id=(.+), node-id=(.+)><>(.+-total)
+      name: kafka_$2_$5
+      labels:
+        clientId: "$3"
+        nodeId: "$4"
+      help: "Kafka $1 JMX metric type $2"
+      type: COUNTER
+    - pattern: kafka.(.+)<type=(.+)-metrics, client-id=(.+), node-id=(.+)><>(.+-avg|.+-rate)
+      name: kafka_$2_$5
+      labels:
+        clientId: "$3"
+        nodeId: "$4"
+      help: "Kafka $1 JMX metric type $2"
+      type: GAUGE
+
+    #kafka.connect:type=kafka-metrics-count,client-id="{clientid}"
+    #kafka.consumer:type=consumer-fetch-manager-metrics,client-id="{clientid}"
+    #kafka.consumer:type=consumer-coordinator-metrics,client-id="{clientid}"
+    #kafka.consumer:type=consumer-metrics,client-id="{clientid}"
+    - pattern: kafka.(.+)<type=(.+)-metrics, client-id=(.*)><>(.+-total)
+      name: kafka_$2_$4
+      labels:
+        clientId: "$3"
+      help: "Kafka $1 JMX metric type $2"
+      type: COUNTER
+    - pattern: kafka.(.+)<type=(.+)-metrics, client-id=(.*)><>(.+-avg|.+-bytes|.+-count|.+-ratio|.+-age|.+-flight|.+-threads|.+-connectors|.+-tasks|.+-ago)
+      name: kafka_$2_$4
+      labels:
+        clientId: "$3"
+      help: "Kafka $1 JMX metric type $2"
+      type: GAUGE
+
+    #kafka.connect:type=connector-metrics,connector="{connector}"
+    - pattern: 'kafka.connect<type=connector-metrics, connector=(.+)><>(connector-class|connector-type|connector-version|status): (.+)'
+      name: kafka_connect_connector_$2
+      value: 1
+      labels:
+        connector: "$1"
+        $2: "$3"
+      help: "Kafka Connect $2 JMX metric type connector"
+      type: GAUGE
+
+    #kafka.connect:type=connector-task-metrics,connector="{connector}",task="{task}<> status"
+    - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>status: ([a-z-]+)'
+      name: kafka_connect_connector_task_status
+      value: 1
+      labels:
+        connector: "$1"
+        task: "$2"
+        status: "$3"
+      help: "Kafka Connect JMX Connector task status"
+      type: GAUGE
+
+    #kafka.connect:type=task-error-metrics,connector="{connector}",task="{task}"
+    #kafka.connect:type=source-task-metrics,connector="{connector}",task="{task}"
+    #kafka.connect:type=sink-task-metrics,connector="{connector}",task="{task}"
+    #kafka.connect:type=connector-task-metrics,connector="{connector}",task="{task}"
+    - pattern: kafka.connect<type=(.+)-metrics, connector=(.+), task=(.+)><>(.+-total)
+      name: kafka_connect_$1_$4
+      labels:
+        connector: "$2"
+        task: "$3"
+      help: "Kafka Connect JMX metric type $1"
+      type: COUNTER
+    - pattern: kafka.connect<type=(.+)-metrics, connector=(.+), task=(.+)><>(.+-count|.+-ms|.+-ratio|.+-seq-no|.+-rate|.+-max|.+-avg|.+-failures|.+-requests|.+-timestamp|.+-logged|.+-errors|.+-retries|.+-skipped)
+      name: kafka_connect_$1_$4
+      labels:
+        connector: "$2"
+        task: "$3"
+      help: "Kafka Connect JMX metric type $1"
+      type: GAUGE
+
+    #kafka.connect:type=connect-worker-metrics,connector="{connector}"
+    - pattern: kafka.connect<type=connect-worker-metrics, connector=(.+)><>([a-z-]+)
+      name: kafka_connect_worker_$2
+      labels:
+        connector: "$1"
+      help: "Kafka Connect JMX metric $1"
+      type: GAUGE
+
+    #kafka.connect:type=connect-worker-metrics
+    - pattern: kafka.connect<type=connect-worker-metrics><>([a-z-]+-total)
+      name: kafka_connect_worker_$1
+      help: "Kafka Connect JMX metric worker"
+      type: COUNTER
+    - pattern: kafka.connect<type=connect-worker-metrics><>([a-z-]+)
+      name: kafka_connect_worker_$1
+      help: "Kafka Connect JMX metric worker"
+      type: GAUGE
+
+    #kafka.connect:type=connect-worker-rebalance-metrics,leader-name|connect-protocol
+    - pattern: 'kafka.connect<type=connect-worker-rebalance-metrics><>(leader-name|connect-protocol): (.+)'
+      name: kafka_connect_worker_rebalance_$1
+      value: 1
+      labels:
+          $1: "$2"
+      help: "Kafka Connect $2 JMX metric type worker rebalance"
+      type: UNTYPED
+
+    #kafka.connect:type=connect-worker-rebalance-metrics
+    - pattern: kafka.connect<type=connect-worker-rebalance-metrics><>([a-z-]+-total)
+      name: kafka_connect_worker_rebalance_$1
+      help: "Kafka Connect JMX metric rebalance information"
+      type: COUNTER
+    - pattern: kafka.connect<type=connect-worker-rebalance-metrics><>([a-z-]+)
+      name: kafka_connect_worker_rebalance_$1
+      help: "Kafka Connect JMX metric rebalance information"
+      type: GAUGE
+
+    #kafka.connect:type=connect-coordinator-metrics
+    - pattern: kafka.connect<type=connect-coordinator-metrics><>(assigned-connectors|assigned-tasks)
+      name: kafka_connect_coordinator_$1
+      help: "Kafka Connect JMX metric assignment information"
+      type: GAUGE
