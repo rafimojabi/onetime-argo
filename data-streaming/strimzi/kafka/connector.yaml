@@ -7,7 +7,7 @@ metadata:
     strimzi.io/cluster: my-connect-cluster
 spec:
   class: io.debezium.connector.postgresql.PostgresConnector
-  tasksMax: 1
+  tasksMax: 2
   config:
     topic.prefix: "defaultdb"
     name: "postgresql-defaultdb"
