@@ -11,7 +11,7 @@ metadata:
 spec:
   version: 3.8.0
   replicas: 1
-  image: ttl.sh/rafi-postgresql-connector:12m
+  image: rafimojabi/connectors:postgresql
   bootstrapServers: my-cluster-kafka-bootstrap:9093
   metricsConfig:
     type: jmxPrometheusExporter
