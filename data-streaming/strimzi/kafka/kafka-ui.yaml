@@ -25,16 +25,16 @@ spec:
             #   value: "my-cluster"                    # Name of your Kafka cluster
             - name :  DYNAMIC_CONFIG_ENABLED
               value: "true"
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: kafka-ui
-# spec:
-#   selector:
-#     app: kafka-ui
-#   ports:
-#     - protocol: TCP
-#       port: 8080
-#       targetPort: 8080
-#       name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+spec:
+  selector:
+    app: kafka-ui
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      name: http
