@@ -23,7 +23,7 @@ spec:
             # - name: KAFKA_CLUSTERS_0_NAME
             #   value: "my-cluster"                    # Name of your Kafka cluster
             - name :  DYNAMIC_CONFIG_ENABLED
-              value: true
+              value: "true"
 # ---
 # apiVersion: v1
 # kind: Service
