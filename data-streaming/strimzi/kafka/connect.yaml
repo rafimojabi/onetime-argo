@@ -10,7 +10,7 @@ metadata:
    strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.8.0
-  replicas: 1
+  replicas: 3
   image: rafimojabi/connectors:postgresql
   bootstrapServers: my-cluster-kafka-bootstrap:9093
   metricsConfig:
