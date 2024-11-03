@@ -14,7 +14,6 @@ spec:
     database.hostname: "192.168.178.22"
     database.port: "5432"
     database.user: "rafi"
-    database.password: "xxxxx"
     database.dbname: "defaultdb"
     database.server.name: "defaultdb"
     connector.class: "io.debezium.connector.postgresql.PostgresConnector"
