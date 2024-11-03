@@ -16,7 +16,7 @@ spec:
     chart: strimzi-kafka-operator
     helm:
       valueFiles: 
-      - $values/data-streaming/strimzi/values.yaml
+      - $values/data-streaming/strimzi/strimzi-operator/values.yaml
     targetRevision: 0.43.0
   - repoURL: https://github.com/rafimojabi/onetime-argo.git 
     targetRevision: HEAD
