@@ -21,10 +21,13 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            # - name: KAFKA_CLUSTERS_0_NAME
-            #   value: "my-cluster"                    # Name of your Kafka cluster
+            - name: KAFKA_CLUSTERS_0_NAME
+              value: "strimzi"                    # Name of your Kafka cluster
             - name :  DYNAMIC_CONFIG_ENABLED
               value: "true"
+            - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              value: "my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092" 
+              
 ---
 apiVersion: v1
 kind: Service
