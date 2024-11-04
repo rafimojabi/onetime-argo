@@ -23,6 +23,8 @@ spec:
         name: '{{region}}'
         namespace: '{{name}}'
       syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
         automated:
           prune: true
           selfHeal: true
