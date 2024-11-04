@@ -11,7 +11,7 @@ spec:
           - path: generator.yaml
   template:
     metadata:
-      name: '{{customer.name}}'
+      name: '{{customers.name}}'
     spec:
       project: default
       source:
@@ -21,7 +21,7 @@ spec:
       destination:
         # Specify the server for each region
         name: '{{customers.region}}'
-        namespace: '{{customer.name}}'
+        namespace: '{{customers.name}}'
       syncPolicy:
         automated:
           prune: true
