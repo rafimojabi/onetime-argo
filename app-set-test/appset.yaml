@@ -16,7 +16,7 @@ spec:
       project: default
       source:
         repoURL:  https://grafana.github.io/helm-charts
-        targetRevision: HEAD
+        targetRevision: 8.0.2
         chart: grafana
       destination:
         # Specify the server for each region
