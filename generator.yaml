@@ -1,5 +1,5 @@
 customers:
-  - name: c1
+  - name: c
     region: in-cluster
-  - name: c2
+  - name: b
     region: kind-local-2
