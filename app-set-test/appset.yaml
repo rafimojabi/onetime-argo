@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: customer-applications
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/rafimojabi/onetime-argo.git
+        revision: HEAD
+        files:
+          - path: generator.yaml
+  template:
+    metadata:
+      name: '{{customer.name}}'
+    spec:
+      project: default
+      source:
+        repoURL:  https://grafana.github.io/helm-charts
+        targetRevision: HEAD
+        chart: grafana
+      destination:
+        # Specify the server for each region
+        name: '{{customers.region}}'
+        namespace: '{{customer.name}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
