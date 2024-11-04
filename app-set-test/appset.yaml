@@ -11,7 +11,7 @@ spec:
           - path: "generator.yaml"
   template:
     metadata:
-      name: '{{customers.name}}'
+      name: '{{name}}'
     spec:
       project: default
       source:
