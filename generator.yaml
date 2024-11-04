@@ -1,5 +1,5 @@
-
-- name: c
-  region: "in-cluster"
-- name: b
-  region: "kind-local-2"
+customer:
+    - name: c
+      region: "in-cluster"
+    - name: b
+      region: "kind-local-2"
