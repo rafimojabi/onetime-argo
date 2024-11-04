@@ -11,7 +11,7 @@ spec:
           - path: generator.yaml
   template:
     metadata:
-      name: '{{customers.name}}'
+      name: '{{.customers.name}}'
     spec:
       project: default
       source:
@@ -20,8 +20,8 @@ spec:
         chart: grafana
       destination:
         # Specify the server for each region
-        name: '{{customers.region}}'
-        namespace: '{{customers.name}}'
+        name: '{{.customers.region}}'
+        namespace: '{{.customers.name}}'
       syncPolicy:
         automated:
           prune: true
