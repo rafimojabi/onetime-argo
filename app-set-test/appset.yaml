@@ -20,7 +20,7 @@ spec:
         chart: grafana
       destination:
         # Specify the server for each region
-        server: '{{region}}'
+        name: '{{region}}'
         namespace: '{{name}}'
       syncPolicy:
         automated:
