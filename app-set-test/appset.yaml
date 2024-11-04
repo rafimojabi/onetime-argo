@@ -8,10 +8,10 @@ spec:
         repoURL: https://github.com/rafimojabi/onetime-argo.git
         revision: HEAD
         files:
-          - path: generator.yaml
+          - path: "generator.yaml"
   template:
     metadata:
-      name: '{{name}}'
+      name: '{{customers.name}}'
     spec:
       project: default
       source:
